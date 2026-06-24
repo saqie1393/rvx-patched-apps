@@ -56,8 +56,10 @@ java() { env -i java --enable-native-access=ALL-UNNAMED "$@"; }
 
 get_prebuilts() {
 	local cli_src=$1 cli_ver=$2 patches_src=$3 patches_ver=$4
-	pr "Getting prebuilts (${patches_src%/*})" >&2
-	local cl_dir=${patches_src%/*}
+	local patches_src_bare=$patches_src
+	if [[ "$patches_src" == gitlab:* ]]; then patches_src_bare="${patches_src#gitlab:}"; fi
+	pr "Getting prebuilts (${patches_src_bare%/*})" >&2
+	local cl_dir=${patches_src_bare%/*}
 	cl_dir=${TEMP_DIR}/${cl_dir,,}-rv
 	[ -d "$cl_dir" ] || mkdir "$cl_dir"
 
@@ -65,27 +67,43 @@ get_prebuilts() {
 		set -- $src_ver
 		local src=$1 tag=$2 ver=${3-} fprefix=$4
 
+		local is_gitlab=false bare_src="$src"
+		if [[ "$src" == gitlab:* ]]; then is_gitlab=true; bare_src="${src#gitlab:}"; fi
+
 		if [ "$tag" = "CLI" ]; then
 			local grab_cl=false
 		elif [ "$tag" = "Patches" ]; then
 			local grab_cl=true
 		else abort unreachable; fi
 
-		local dir=${src%/*}
+		local dir=${bare_src%/*}
 		dir=${TEMP_DIR}/${dir,,}-rv
 		[ -d "$dir" ] || mkdir "$dir"
 
-		local rv_rel="https://api.github.com/repos/${src}/releases" name_ver
+		local rv_rel name_ver
+		if [ "$is_gitlab" = true ]; then
+			rv_rel="https://gitlab.com/api/v4/projects/${bare_src//\//%2F}/releases"
+		else
+			rv_rel="https://api.github.com/repos/${bare_src}/releases"
+		fi
 		if [ "$ver" = "dev" ]; then
 			local resp
-			resp=$(gh_req "$rv_rel" -) || return 1
+			if [ "$is_gitlab" = true ]; then
+				resp=$(req "$rv_rel" -) || return 1
+			else
+				resp=$(gh_req "$rv_rel" -) || return 1
+			fi
 			ver=$(jq -e -r '.[] | .tag_name' <<<"$resp" | get_highest_ver) || return 1
 		fi
 		if [ "$ver" = "latest" ]; then
-			rv_rel+="/latest"
+			if [ "$is_gitlab" = false ]; then rv_rel+="/latest"; fi
 			name_ver="*"
 		else
-			rv_rel+="/tags/${ver}"
+			if [ "$is_gitlab" = true ]; then
+				rv_rel+="/${ver}"
+			else
+				rv_rel+="/tags/${ver}"
+			fi
 			name_ver="$ver"
 		fi
 
@@ -98,9 +116,16 @@ get_prebuilts() {
 		fi
 		if [ -z "$file" ]; then
 			local resp asset name
-			resp=$(gh_req "$rv_rel" -) || return 1
-			tag_name=$(jq -r '.tag_name' <<<"$resp") || return 1
-			matches=$(jq -e '.assets | map(select(.name | (endswith("asc") or endswith("json")) | not))' <<<"$resp") || return 1
+			if [ "$is_gitlab" = true ]; then
+				resp=$(req "$rv_rel" -) || return 1
+				if [ "$ver" = "latest" ]; then resp=$(jq -e '.[0]' <<<"$resp") || return 1; fi
+				tag_name=$(jq -r '.tag_name' <<<"$resp") || return 1
+				matches=$(jq -e '.assets.links | map(select(.name | (endswith("asc") or endswith("json")) | not))' <<<"$resp") || return 1
+			else
+				resp=$(gh_req "$rv_rel" -) || return 1
+				tag_name=$(jq -r '.tag_name' <<<"$resp") || return 1
+				matches=$(jq -e '.assets | map(select(.name | (endswith("asc") or endswith("json")) | not))' <<<"$resp") || return 1
+			fi
 			if [ "$(jq 'length' <<<"$matches")" -gt 1 ]; then
 				local matches_new
 				matches_new=$(jq -e -r 'map(select(.name | contains("-dev") | not))' <<<"$matches")
@@ -118,8 +143,15 @@ get_prebuilts() {
 			url=$(jq -r .url <<<"$asset")
 			name=$(jq -r .name <<<"$asset")
 			file="${dir}/${name}"
-			gh_dl "$file" "$url" >&2 || return 1
-			echo "$tag: $(cut -d/ -f1 <<<"$src")/${name}  " >>"${cl_dir}/changelog.md"
+			if [ "$is_gitlab" = true ]; then
+				if [ ! -f "$file" ]; then
+					pr "Getting '$file' from '$url'" >&2
+					req "$url" "$file" >&2 || return 1
+				fi
+			else
+				gh_dl "$file" "$url" >&2 || return 1
+			fi
+			echo "$tag: $(cut -d/ -f1 <<<"$bare_src")/${name}  " >>"${cl_dir}/changelog.md"
 		else
 			grab_cl=false
 			name=$(basename "$file")
@@ -128,7 +160,13 @@ get_prebuilts() {
 		fi
 
 		if [ "$tag" = "Patches" ]; then
-			if [ "$grab_cl" = true ]; then echo -e "[Changelog](https://github.com/${src}/releases/tag/${tag_name})\n" >>"${cl_dir}/changelog.md"; fi
+			if [ "$grab_cl" = true ]; then
+				if [ "$is_gitlab" = true ]; then
+					echo -e "[Changelog](https://gitlab.com/${bare_src}/-/releases/${tag_name})\n" >>"${cl_dir}/changelog.md"
+				else
+					echo -e "[Changelog](https://github.com/${bare_src}/releases/tag/${tag_name})\n" >>"${cl_dir}/changelog.md"
+				fi
+			fi
 			if [ "$REMOVE_RV_INTEGRATIONS_CHECKS" = true ]; then
 				local extensions_ext
 				extensions_ext=$(unzip -l "${file}" "extensions/shared.*" | grep -o "shared\..*") extensions_ext="${extensions_ext#*.}"
@@ -178,19 +216,44 @@ config_update() {
 			if [ "${sources["$PATCHES_SRC/$PATCHES_VER"]}" = 1 ]; then upped+=("$table_name"); fi
 		else
 			sources["$PATCHES_SRC/$PATCHES_VER"]=0
-			local rv_rel="https://api.github.com/repos/${PATCHES_SRC}/releases"
-			if [ "$PATCHES_VER" = "dev" ]; then
-				last_patches=$(gh_req "$rv_rel" - | jq -e -r '.[0]') || continue
-			elif [ "$PATCHES_VER" = "latest" ]; then
-				last_patches=$(gh_req "$rv_rel/latest" -) || continue
+			local is_gitlab_cu=false bare_patches_src="$PATCHES_SRC"
+			if [[ "$PATCHES_SRC" == gitlab:* ]]; then is_gitlab_cu=true; bare_patches_src="${PATCHES_SRC#gitlab:}"; fi
+			local rv_rel
+			if [ "$is_gitlab_cu" = true ]; then
+				rv_rel="https://gitlab.com/api/v4/projects/${bare_patches_src//\//%2F}/releases"
 			else
-				last_patches=$(gh_req "$rv_rel/tags/${ver}" -) || continue
+				rv_rel="https://api.github.com/repos/${bare_patches_src}/releases"
 			fi
-			if ! last_patches=$(jq -e -r '.assets[] | select(.name | (endswith("asc") or endswith("json")) | not) | .name' <<<"$last_patches"); then
-				abort "config_update error: '$last_patches'"
+			if [ "$PATCHES_VER" = "dev" ]; then
+				if [ "$is_gitlab_cu" = true ]; then
+					last_patches=$(req "$rv_rel" - | jq -e -r '.[0]') || continue
+				else
+					last_patches=$(gh_req "$rv_rel" - | jq -e -r '.[0]') || continue
+				fi
+			elif [ "$PATCHES_VER" = "latest" ]; then
+				if [ "$is_gitlab_cu" = true ]; then
+					last_patches=$(req "$rv_rel" - | jq -e -r '.[0]') || continue
+				else
+					last_patches=$(gh_req "$rv_rel/latest" -) || continue
+				fi
+			else
+				if [ "$is_gitlab_cu" = true ]; then
+					last_patches=$(req "$rv_rel/${PATCHES_VER}" -) || continue
+				else
+					last_patches=$(gh_req "$rv_rel/tags/${ver}" -) || continue
+				fi
+			fi
+			if [ "$is_gitlab_cu" = true ]; then
+				if ! last_patches=$(jq -e -r '.assets.links[] | select(.name | (endswith("asc") or endswith("json")) | not) | .name' <<<"$last_patches"); then
+					abort "config_update error: '$last_patches'"
+				fi
+			else
+				if ! last_patches=$(jq -e -r '.assets[] | select(.name | (endswith("asc") or endswith("json")) | not) | .name' <<<"$last_patches"); then
+					abort "config_update error: '$last_patches'"
+				fi
 			fi
 			if [ "$last_patches" ]; then
-				if ! OP=$(grep "^Patches: ${PATCHES_SRC%%/*}/" build.md | grep -m1 "$last_patches"); then
+				if ! OP=$(grep "^Patches: ${bare_patches_src%%/*}/" build.md | grep -m1 "$last_patches"); then
 					sources["$PATCHES_SRC/$PATCHES_VER"]=1
 					prcfg=true
 					upped+=("$table_name")

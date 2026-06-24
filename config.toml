@@ -82,6 +82,28 @@ arch = "arm64-v8a"
 archive-dlurl = "https://archive.org/download/andrews-apks/apks/com.facebook.katana"
 uptodown-dlurl = "https://facebook.en.uptodown.com/android"
 
+[Threads-DeVanced]
+app-name = "Threads"
+patches-source = "RookieEnough/De-Vanced"
+cli-source = "MorpheApp/morphe-cli"
+rv-brand = "De-Vanced"
+build-mode = "both"
+clone = true
+arch = "arm64-v8a"
+archive-dlurl = "https://archive.org/download/andrews-apks/apks/com.instagram.barcelona"
+apkmirror-dlurl = "https://www.apkmirror.com/apk/meta-platforms-inc/threads-instagram/"
+uptodown-dlurl = "https://threads.en.uptodown.com/android"
+
+[Telegram-Paresh]
+app-name = "Telegram"
+patches-source = "gitlab:Paresh-Maheshwari/paresh-patches"
+cli-source = "MorpheApp/morphe-cli"
+rv-brand = "Paresh"
+build-mode = "both"
+apkmirror-dlurl = "https://www.apkmirror.com/apk/telegram-fz-llc/telegram/"
+uptodown-dlurl = "https://telegram.en.uptodown.com/android"
+archive-dlurl = "https://archive.org/download/andrews-apks/apks/org.telegram.messenger.web"
+
 [Photos-DeVanced]
 app-name = "Photos"
 patches-source = "RookieEnough/De-Vanced"
