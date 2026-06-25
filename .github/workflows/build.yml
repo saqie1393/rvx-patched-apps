@@ -54,6 +54,11 @@ jobs:
           GITHUB_REPOSITORY: $GITHUB_REPOSITORY
           NEXT_VER_CODE: ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}
 
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "build/*"
+
       - name: Get output
         id: get_output
         run: |
