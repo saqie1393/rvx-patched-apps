@@ -24,13 +24,13 @@ gh attestation verify <file> --repo andrewliang25/patched-apps
 | <div align="center"><img src="assets/icons/facebook.svg" width="28"><br><b>Facebook</b></div> | De-Vanced | Block ads/sponsored posts, cleaner feed | ✅ | ✅ | arm64-v8a; pinned `490.0.0.63.82`; APK renamed to `app.devanced.facebook.katana` — **experimental** (see [permission conflict](#meta-app-clones-duplicate-permission-conflict)) |
 | <div align="center"><img src="assets/icons/threads.svg" width="28"><br><b>Threads</b></div> | De-Vanced | Block ads, hide suggested threads | ✅ | ✅ | arm64-v8a; APK renamed to `app.devanced.instagram.barcelona` |
 | <div align="center"><img src="assets/icons/reddit.svg" width="28"><br><b>Reddit</b></div> | Morphe | Block ads, sanitize share links, hide recommendations/premium prompts, custom branding | ✅ | ✅ | non-root APK renamed to `app.morphe.reddit.frontpage` |
-| <div align="center"><img src="assets/icons/twitter.svg" width="28"><br><b>Twitter / X</b></div> | Piko + x-shim | Hide ads/promoted tweets, download media, restore chronological timeline, hide view counts | ✅ | ✅ | Patched with **two bundles** — Piko plus [x-shim](https://gitlab.com/inotia00/x-shim) for X 12.x support; non-root APK *not* renamed (Piko ships no rename patch), so it shares the package `com.twitter.android` with the Play Store build |
+| <div align="center"><img src="assets/icons/twitter.svg" width="28"><br><b>Twitter / X</b></div> | Piko + x-shim | Hide ads/promoted tweets, download media, restore chronological timeline, hide view counts | ✅ | ❌ | APK-only, not cloned — shares `com.twitter.android` with the Play Store build (the mounted module is [dropped](#twitterx-piko-module-dropped)). Patched with **two bundles** — Piko plus [x-shim](https://gitlab.com/inotia00/x-shim) for X 12.x support |
 | <div align="center"><img src="assets/icons/telegram.svg" width="28"><br><b>Telegram</b></div> | Paresh-Patches | Ghost mode (no read receipts), anti-delete/anti-edit, save restricted media | ✅ | ✅ | targets the standalone/website build `org.telegram.messenger.web`; not renamed (Paresh ships no rename patch) — already coexists with the Play Store build `org.telegram.messenger` |
 
 Each app is a single config entry that emits two output types:
 
 * **non-root APK** — install directly, no root. Most apps' APKs are package-renamed (a `app.<patch>.<pkg>` "clone", or the MicroG-RE variant for Google apps) so they install *alongside* the official app rather than replacing it.
-* **module** — Magisk/KernelSU module that mounts the patched APK over the stock app. Keeps the original package, so it needs root and the stock app installed.
+* **module** — Magisk/KernelSU module that mounts the patched APK over the stock app. Keeps the original package, so it needs root and the stock app installed. (Instagram and Twitter/X ship as APK-only — their modules were dropped.)
 
 > **Experimental:** Instagram and Facebook are integrity-protected (pairip) apps; their patched builds may not run on all setups.
 
@@ -53,6 +53,10 @@ Workarounds: uninstall the conflicting official Meta app first, or use the root 
 ### Instagram Piko module: Piko settings won't open
 
 The Instagram **module** has been dropped. On the mounted original-package build the Piko settings screen could not be opened — see [crimera/piko#882](https://github.com/crimera/piko/issues/882) — so Instagram now ships **only** the clone APK (`app.piko.instagram.android`), where the settings open normally.
+
+### Twitter/X Piko module: dropped
+
+The Twitter/X **module** has been dropped — the mounted, original-package build had runtime issues, while the patched non-root APK works. Twitter/X now ships **only** the non-root APK. That APK is *not* cloned, so it keeps the package `com.twitter.android` and can't coexist with the Play Store build — uninstall the official X app first.
 
 ## Building locally
 
@@ -80,7 +84,7 @@ Twitter and Instagram use [Piko](https://github.com/crimera/piko) (Twitter addit
 
 The config is kept comment-free; here's what the non-obvious settings mean:
 
-* **`clone = true`** (Reddit, Facebook, Threads, Photos) — with `build-mode = "both"`, the apk-mode output is package-renamed to `app.<patch>.<pkg>` (e.g. `app.devanced.facebook.katana`) so the **non-root APK** installs alongside the official app, while the **module** keeps the original package to mount over the stock app. (The clone APK *is* that renamed non-root APK — not a separate artifact.) Same single-entry pattern YouTube/YT Music get from MicroG-RE. **Instagram** is also `clone = true` but `build-mode = "apk"` — APK-only (renamed to `app.piko.instagram.android`); its mounted module was dropped over the [Piko-settings bug](#instagram-piko-module-piko-settings-wont-open). **Twitter** is `build-mode = "both"` but *not* cloned — Piko ships no rename patch, so its non-root APK keeps `com.twitter.android` and can't coexist with the Play Store build.
+* **`clone = true`** (Reddit, Facebook, Threads, Photos) — with `build-mode = "both"`, the apk-mode output is package-renamed to `app.<patch>.<pkg>` (e.g. `app.devanced.facebook.katana`) so the **non-root APK** installs alongside the official app, while the **module** keeps the original package to mount over the stock app. (The clone APK *is* that renamed non-root APK — not a separate artifact.) Same single-entry pattern YouTube/YT Music get from MicroG-RE. **Instagram** is also `clone = true` but `build-mode = "apk"` — APK-only (renamed to `app.piko.instagram.android`); its mounted module was dropped over the [Piko-settings bug](#instagram-piko-module-piko-settings-wont-open). **Twitter** is `build-mode = "apk"` and *not* cloned; its mounted module was [dropped](#twitterx-piko-module-dropped) too.
 * **Twitter `extra-patches-source` (Piko + x-shim)** — newer X builds need [inotia00/x-shim](https://gitlab.com/inotia00/x-shim) applied *alongside* Piko. `extra-patches-source` adds it as a second patch bundle in one patch run, so Twitter tracks `version = "auto"` (~12.2.0) instead of pinning, and the old `'Block redirecting to X Lite'` exclusion is gone. A new x-shim release self-triggers a daily rebuild. See [`CONFIG.md`](./CONFIG.md).
 * **Pinned `version =` (not `auto`)** — Facebook `490.0.0.63.82` is held at the exact build its patches support; **don't switch it to `auto`**. Its stock APK is mirrored on a self-hosted archive.org item because apkmirror/uptodown don't reliably serve that build. (Twitter and Instagram are also mirrored on archive.org — apkmirror 403s their downloads — but track `auto`.)
 * **`enable-module-update`** — set `false` to stop the modules from receiving in-app updates.
