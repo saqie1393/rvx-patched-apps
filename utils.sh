@@ -357,17 +357,20 @@ get_patch_last_supported_ver() {
 			epr "list-patches: '$op'"
 			return 1
 		fi
-		local ver vers="" NL=$'\n'
+		local ver vers="" n=0 NL=$'\n'
 		while IFS= read -r line; do
 			line="${line:1:${#line}-2}"
 			ver=$(sed -n "/^Name: $line\$/,/^\$/p" <<<"$op" | sed -n "/^Compatible versions:\$/,/^\$/p" | tail -n +2)
-			vers=${ver}${NL}
+			if [ -n "$ver" ]; then vers+=${ver}${NL}; n=$((n + 1)); fi
 		done <<<"$(list_args "$inc_sel")"
-		vers=$(awk '{$1=$1}1' <<<"$vers")
-		if [ "$vers" ]; then
-			get_highest_ver <<<"$vers"
-			return
+		vers=$(awk '{$1=$1}1' <<<"$vers" | grep -v '^$' || :)
+		if [ "$vers" ] && [ "$n" -gt 0 ]; then
+			# a version supported by all n constraining included patches appears n times
+			local common
+			common=$(sort <<<"$vers" | uniq -c | awk -v n="$n" '$1 == n {print $2}')
+			if [ "$common" ]; then get_highest_ver <<<"$common"; return; fi
 		fi
+		# else fall through to the primary + extra-bundle resolution below
 	fi
 	# resolve the version supported by the primary bundle and every extra-patches bundle,
 	# then take the lowest ceiling so the picked version satisfies all bundles applied
