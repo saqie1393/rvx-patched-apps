@@ -437,7 +437,7 @@ merge_splits() {
 		return 1
 	fi
 	# sign the merged stock apk
-	if ! OP=$(java -jar "$APKSIGNER" sign --ks ks-p12.keystore --ks-pass pass:123456789 --key-pass pass:123456789 --ks-key-alias jhc \
+	if ! OP=$(java -jar "$APKSIGNER" sign --ks ks-p12.keystore --ks-pass pass:123456789 --key-pass pass:123456789 --ks-key-alias andrewliang \
 		--out "${output}" "${output}-unsigned"); then
 		epr "apksigner error: $OP"
 		return 1
@@ -650,7 +650,7 @@ patch_apk() {
 	tmp_files="$(pwd)/$(mktemp -d -p "$TEMP_DIR")"
 
 	local cmd="java -jar '$cli_jar' patch '$stock_input' --purge -o '$patched_apk' -p '$patches_jar' --keystore=ks.keystore \
---keystore-entry-password=123456789 --keystore-password=123456789 --signer=jhc --keystore-entry-alias=jhc -t '$tmp_files' $patcher_args"
+--keystore-entry-password=123456789 --keystore-password=123456789 --signer=andrewliang --keystore-entry-alias=andrewliang -t '$tmp_files' $patcher_args"
 	# additional patch bundle(s) applied alongside the primary one (e.g. x-shim + Piko)
 	local ep
 	for ep in $extra_patches; do cmd+=" -p '$ep'"; done

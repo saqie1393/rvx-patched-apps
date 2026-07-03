@@ -63,7 +63,7 @@ The main (top-level) table sets defaults; each `[App]` table overrides them. Key
 
 ## Signing keys
 
-`ks.keystore` (patched APKs) and `ks-p12.keystore` (merged stock bundles) use alias `jhc` / password `123456789`. These are committed intentionally — they are throwaway signing keys for self-built APKs, not secrets.
+`ks.keystore` (patched APKs) and `ks-p12.keystore` (merged stock bundles) use alias `andrewliang` / password `123456789`. These are committed intentionally — they are throwaway signing keys for self-built APKs, not secrets.
 
 ## Maintenance gotchas (learned operationally)
 
