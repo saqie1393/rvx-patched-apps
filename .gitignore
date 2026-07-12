@@ -5,5 +5,7 @@
 test*
 /logs
 build.md
+patches-state.json
+patches-built.json
 cmpr
 *-temporary-files
