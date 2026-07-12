@@ -6,6 +6,11 @@ TEMP_DIR="temp"
 BIN_DIR="bin"
 BUILD_DIR="build"
 DL_SRCS=("direct" "archive" "apkmirror" "uptodown")
+# persistent per-app record of the patch-bundle asset that was last successfully built
+# (lives on the 'update' branch). config_update compares against it; build.yml accumulates it.
+PATCHES_STATE_FILE="patches-state.json"
+# per-run partial that build.sh emits and build.yml merges into PATCHES_STATE_FILE.
+BUILT_PATCHES_FILE="patches-built.json"
 
 if [ "${GITHUB_TOKEN-}" ]; then GH_HEADER="Authorization: token ${GITHUB_TOKEN}"; else GH_HEADER=; fi
 NEXT_VER_CODE=${NEXT_VER_CODE:-$(date +'%Y%m%d')}
@@ -204,71 +209,76 @@ set_prebuilts() {
 	TOML="${BIN_DIR}/toml/tq-${arch}"
 }
 
-# checks whether a patches source has a release newer than what build.md records.
-# returns 0 if so (=> the app using it needs a rebuild), 1 otherwise.
-# shares caller scope: sources[] (per-source dedup cache), prcfg; uses global TEMP_DIR.
-_config_update_check_src() {
-	local PATCHES_SRC=$1 PATCHES_VER=$2
-	if [[ -v sources["$PATCHES_SRC/$PATCHES_VER"] ]]; then
-		[ "${sources["$PATCHES_SRC/$PATCHES_VER"]}" = 1 ]
+# resolves the current patch-bundle asset name for a source+version (e.g. "patches-1.19.0.mpp"),
+# mirroring the asset get_prebuilts would download so the value is comparable to what a build
+# recorded. sets LATEST_NAME (empty on failure) and returns 1 if it cannot be resolved (API
+# error). result cached per "src/ver" in the caller-scoped latest_cache[]; must be called
+# directly (not in a $() subshell) or the cache write would be discarded.
+_latest_patches_name() {
+	local PATCHES_SRC=$1 PATCHES_VER=$2 key="$1/$2"
+	if [[ -v latest_cache["$key"] ]]; then
+		LATEST_NAME="${latest_cache["$key"]}"
+		[ -n "$LATEST_NAME" ]
 		return
 	fi
-	sources["$PATCHES_SRC/$PATCHES_VER"]=0
+	latest_cache["$key"]="" LATEST_NAME="" # pessimistic default; overwritten on success
 	local is_gitlab_cu=false bare_patches_src="$PATCHES_SRC"
 	if [[ "$PATCHES_SRC" == gitlab:* ]]; then is_gitlab_cu=true; bare_patches_src="${PATCHES_SRC#gitlab:}"; fi
-	local rv_rel last_patches OP
+	local rv_rel resp
 	if [ "$is_gitlab_cu" = true ]; then
 		rv_rel="https://gitlab.com/api/v4/projects/${bare_patches_src//\//%2F}/releases"
 	else
 		rv_rel="https://api.github.com/repos/${bare_patches_src}/releases"
 	fi
-	if [ "$PATCHES_VER" = "dev" ]; then
+	if [ "$PATCHES_VER" = "dev" ] || [ "$PATCHES_VER" = "latest" ]; then
 		if [ "$is_gitlab_cu" = true ]; then
-			last_patches=$(req "$rv_rel" - | jq -e -r '.[0]') || return 1
+			resp=$(req "$rv_rel" - | jq -e '.[0]') || return 1
+		elif [ "$PATCHES_VER" = "dev" ]; then
+			resp=$(gh_req "$rv_rel" - | jq -e '.[0]') || return 1
 		else
-			last_patches=$(gh_req "$rv_rel" - | jq -e -r '.[0]') || return 1
-		fi
-	elif [ "$PATCHES_VER" = "latest" ]; then
-		if [ "$is_gitlab_cu" = true ]; then
-			last_patches=$(req "$rv_rel" - | jq -e -r '.[0]') || return 1
-		else
-			last_patches=$(gh_req "$rv_rel/latest" -) || return 1
+			resp=$(gh_req "$rv_rel/latest" -) || return 1
 		fi
 	else
 		if [ "$is_gitlab_cu" = true ]; then
-			last_patches=$(req "$rv_rel/${PATCHES_VER}" -) || return 1
+			resp=$(req "$rv_rel/${PATCHES_VER}" -) || return 1
 		else
-			last_patches=$(gh_req "$rv_rel/tags/${PATCHES_VER}" -) || return 1
+			resp=$(gh_req "$rv_rel/tags/${PATCHES_VER}" -) || return 1
 		fi
 	fi
+	# select the same asset get_prebuilts picks: drop .asc/.json, and if that leaves >1 prefer
+	# the non "-dev" build when doing so is unambiguous, then take the first.
+	local matches
 	if [ "$is_gitlab_cu" = true ]; then
-		if ! last_patches=$(jq -e -r '.assets.links[] | select(.name | (endswith("asc") or endswith("json")) | not) | .name' <<<"$last_patches"); then
-			abort "config_update error: '$last_patches'"
-		fi
+		matches=$(jq -e '.assets.links | map(select(.name | (endswith("asc") or endswith("json")) | not))' <<<"$resp") || return 1
 	else
-		if ! last_patches=$(jq -e -r '.assets[] | select(.name | (endswith("asc") or endswith("json")) | not) | .name' <<<"$last_patches"); then
-			abort "config_update error: '$last_patches'"
+		matches=$(jq -e '.assets | map(select(.name | (endswith("asc") or endswith("json")) | not))' <<<"$resp") || return 1
+	fi
+	if [ "$(jq 'length' <<<"$matches")" -gt 1 ]; then
+		local matches_new
+		if matches_new=$(jq -e 'map(select(.name | contains("-dev") | not))' <<<"$matches") && [ "$(jq 'length' <<<"$matches_new")" -eq 1 ]; then
+			matches=$matches_new
 		fi
 	fi
-	if [ "$last_patches" ]; then
-		if ! OP=$(grep "^Patches: ${bare_patches_src%%/*}/" build.md | grep -m1 "$last_patches"); then
-			sources["$PATCHES_SRC/$PATCHES_VER"]=1
-			prcfg=true
-			return 0
-		else
-			echo "$OP" >>"$TEMP_DIR"/skipped
-			return 1
-		fi
-	fi
-	return 1
+	local name
+	name=$(jq -e -r '.[0].name' <<<"$matches") || return 1
+	latest_cache["$key"]=$name LATEST_NAME=$name
+}
+
+# returns 0 if $table needs a rebuild for patches source $1@$2, i.e. the current asset differs
+# from the one recorded for this app in PATCHES_STATE_FILE (or nothing is recorded yet).
+# 1 otherwise. an unresolvable source (API error) is treated as "no change" so a transient
+# failure never spuriously triggers a full build.
+_patches_src_changed() {
+	local PATCHES_SRC=$1 PATCHES_VER=$2 table=$3 recorded
+	_latest_patches_name "$PATCHES_SRC" "$PATCHES_VER" || return 1 # sets LATEST_NAME
+	recorded=$(jq -r --arg t "$table" --arg s "$PATCHES_SRC" '.[$t][$s] // ""' "$PATCHES_STATE_FILE" 2>/dev/null) || recorded=""
+	[ "$LATEST_NAME" != "$recorded" ]
 }
 
 config_update() {
-	if [ ! -f build.md ]; then abort "build.md not available"; fi
-	declare -A sources
-	: >"$TEMP_DIR"/skipped
-	local upped=()
-	local prcfg=false
+	[ -f "$PATCHES_STATE_FILE" ] || echo '{}' >"$PATCHES_STATE_FILE"
+	declare -A latest_cache
+	local LATEST_NAME="" upped=()
 	for table_name in $(toml_get_table_names); do
 		if [ -z "$table_name" ]; then continue; fi
 		t=$(toml_get_table "$table_name")
@@ -277,14 +287,14 @@ config_update() {
 		PATCHES_SRC=$(toml_get "$t" patches-source) || PATCHES_SRC=$DEF_PATCHES_SRC
 		PATCHES_VER=$(toml_get "$t" patches-version) || PATCHES_VER=$DEF_PATCHES_VER
 		local up=false
-		if _config_update_check_src "$PATCHES_SRC" "$PATCHES_VER"; then up=true; fi
+		if _patches_src_changed "$PATCHES_SRC" "$PATCHES_VER" "$table_name"; then up=true; fi
 		if EXTRA_SRC=$(toml_get "$t" extra-patches-source); then
 			EXTRA_VER=$(toml_get "$t" extra-patches-version) || EXTRA_VER="latest"
-			if _config_update_check_src "$EXTRA_SRC" "$EXTRA_VER"; then up=true; fi
+			if _patches_src_changed "$EXTRA_SRC" "$EXTRA_VER" "$table_name"; then up=true; fi
 		fi
 		if [ "$up" = true ]; then upped+=("$table_name"); fi
 	done
-	if [ "$prcfg" = true ]; then
+	if [ ${#upped[@]} -ne 0 ]; then
 		local query=""
 		for table in "${upped[@]}"; do
 			if [ -n "$query" ]; then query+=" or "; fi
@@ -324,6 +334,11 @@ gh_dl() {
 }
 
 log() { echo -e "$1  " >>"build.md"; }
+# append one "<app>\t<patches-source>\t<asset-name>" line per successfully-built bundle.
+# build.sh folds these into BUILT_PATCHES_FILE after all builds finish; build.yml merges that
+# into the persistent PATCHES_STATE_FILE. only called on success so a failed build isn't
+# recorded (=> it stays eligible for a retry on the next run).
+log_built_patches() { printf '%s\t%s\t%s\n' "$1" "$2" "$(basename "$3")" >>"${TEMP_DIR}/built-patches.tsv"; }
 get_highest_ver() {
 	local vers m
 	vers=$(tee)
@@ -689,6 +704,7 @@ build_rv() {
 	local dl_from=${args[dl_from]}
 	local arch=${args[arch]}
 	local arch_f="${arch// /}"
+	local built_ok=false # set once any (mode, arch) build for this app succeeds
 
 	local p_patcher_args=()
 	if [ "${args[excluded_patches]}" ]; then p_patcher_args+=("$(join_args "${args[excluded_patches]}" -d)"); fi
@@ -862,7 +878,7 @@ build_rv() {
 		if [ "${NORB:-}" != true ] || { [ ! -f "$patched_apk" ] && [ ! -f "$apk_output" ]; }; then
 			if ! patch_apk "$stock_apk_to_patch" "$patched_apk" "${patcher_args[*]}" "${args[cli]}" "${args[ptjar]}" "${args[ptjar_extra]:-}"; then
 				epr "Building '${table}' failed!"
-				return 0
+				break # not 'return': fall through so a mode that already shipped still records state
 			fi
 		fi
 		rm "$stock_apk_to_patch"
@@ -873,6 +889,7 @@ build_rv() {
 				cp -f "$patched_apk" "$apk_output"
 			fi
 			pr "Built ${table} (non-root): '${apk_output}'"
+			built_ok=true
 			continue
 		fi
 		local base_template
@@ -903,7 +920,7 @@ build_rv() {
 			elif [ "${args[include_stock]}" = "split" ]; then
 				if [ ! -f "${stock_apk}.apkm" ]; then
 					epr "Cannot include as 'split' because stock apk of $table_name is not a bundle"
-					return 0
+					break # not 'return': fall through so a mode that already shipped still records state
 				fi
 				if [ "$arch" = "arm64-v8a" ]; then
 					unzip -j "${stock_apk}.apkm" '*.apk' -x '*x86_64.apk' -x '*x86.apk' -x '*armeabi_v7a.apk' -d "${base_template}/stock/" >/dev/null 2>&1
@@ -923,7 +940,17 @@ build_rv() {
 		zip -"$COMPRESSION_LEVEL" -FSqr "${CWD}/${BUILD_DIR}/${module_output}" .
 		popd >/dev/null || :
 		pr "Built ${table} (root): '${BUILD_DIR}/${module_output}'"
+		built_ok=true
 	done
+
+	# record the patch bundles this app was actually built with, keyed by its base table name
+	# (args[table_base] has no arch suffix) so config_update can skip it until a bundle changes.
+	if [ "$built_ok" = true ]; then
+		log_built_patches "${args[table_base]}" "${args[patches_src]}" "${args[ptjar]}"
+		if [ -n "${args[ptjar_extra]:-}" ]; then
+			log_built_patches "${args[table_base]}" "${args[extra_patches_src]}" "${args[ptjar_extra]}"
+		fi
+	fi
 }
 
 list_args() { tr -d '\t\r' <<<"$1" | tr -s ' ' | sed 's/" "/"\n"/g' | sed 's/\([^"]\)"\([^"]\)/\1'\''\2/g' | grep -v '^$' || :; }

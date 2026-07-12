@@ -8,7 +8,7 @@ source utils.sh
 trap "abort" INT
 
 if [ "${1-}" = "clean" ]; then
-	rm -r "$TEMP_DIR" "$BUILD_DIR" build.md
+	rm -rf "$TEMP_DIR" "$BUILD_DIR" build.md "$BUILT_PATCHES_FILE"
 	exit 0
 fi
 
@@ -41,6 +41,7 @@ if [ "${2-}" = "--config-update" ]; then
 fi
 
 : >build.md
+rm -f "$BUILT_PATCHES_FILE" "$TEMP_DIR"/built-patches.tsv # stale from a previous run
 ENABLE_MODULE_UPDATE=$(toml_get "$main_config_t" enable-module-update) || ENABLE_MODULE_UPDATE=true
 if [ "$ENABLE_MODULE_UPDATE" = true ] && [ -z "${GITHUB_REPOSITORY-}" ]; then
 	pr "You are building locally. Module updates will not be enabled."
@@ -85,6 +86,7 @@ for table_name in $(toml_get_table_names); do
 	read -r patches_jar cli_jar <<<"$PREBUILTS"
 	app_args[cli]=$cli_jar
 	app_args[ptjar]=$patches_jar
+	app_args[patches_src]=$patches_src # recorded (with the built asset) into the patches state
 
 	# optional second patch bundle applied alongside the primary one (e.g. x-shim + Piko).
 	# reuses get_prebuilts (handles gitlab:/GitHub + integrations stripping); the CLI is cached
@@ -98,7 +100,11 @@ for table_name in $(toml_get_table_names); do
 		fi
 		read -r extra_patches_jar _ <<<"$EXTRA"
 		app_args[ptjar_extra]=$extra_patches_jar
-	} || app_args[ptjar_extra]=""
+		app_args[extra_patches_src]=$extra_patches_src
+	} || {
+		app_args[ptjar_extra]=""
+		app_args[extra_patches_src]=""
+	}
 	app_args[rv_brand]=$(toml_get "$t" rv-brand) || app_args[rv_brand]=$DEF_RV_BRAND
 
 	app_args[excluded_patches]=$(toml_get "$t" excluded-patches) || app_args[excluded_patches]=""
@@ -111,6 +117,7 @@ for table_name in $(toml_get_table_names); do
 	app_args[patcher_args]=$(toml_get "$t" patcher-args) || app_args[patcher_args]=""
 	app_args[clone]=$(toml_get "$t" clone) && vtf "${app_args[clone]}" "clone" || app_args[clone]=false
 	app_args[table]=$table_name
+	app_args[table_base]=$table_name # stable state key; app_args[table] gets an arch suffix below
 	app_args[build_mode]=$(toml_get "$t" build-mode) && {
 		if ! isoneof "${app_args[build_mode]}" both apk module; then
 			abort "ERROR: build-mode '${app_args[build_mode]}' is not a valid option for '${table_name}': only 'both', 'apk' or 'module' is allowed"
@@ -173,6 +180,14 @@ done
 wait
 rm -rf temp/tmp.*
 if [ -z "$(ls -A1 "${BUILD_DIR}")" ]; then abort "All builds failed."; fi
+
+# fold this run's successfully-built bundles into a per-run JSON ({ "<app>": { "<src>": "<asset>" } }).
+# build.yml merges this into the persistent PATCHES_STATE_FILE on the 'update' branch, so apps
+# built in an earlier run keep their record instead of being clobbered like build.md is.
+if [ -f "$TEMP_DIR"/built-patches.tsv ]; then
+	jq -Rn 'reduce (inputs | split("\t")) as $r ({}; .[$r[0]][$r[1]] = $r[2])' \
+		"$TEMP_DIR"/built-patches.tsv >"$BUILT_PATCHES_FILE"
+fi
 
 log "\nInstall [MicroG-RE](https://github.com/MorpheApp/MicroG-RE/releases) for non-root Google APKs"
 log "Use [zygisk-detach](https://github.com/j-hc/zygisk-detach) to detach patched apps from Play Store"

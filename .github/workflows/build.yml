@@ -88,6 +88,17 @@ jobs:
         run: |
           git checkout -f update || git switch --discard-changes --orphan update
           cp -f build.tmp build.md
+
+          # merge this run's built patch versions into the persistent state (untracked
+          # patches-built.json survives the branch switch). '+' replaces each rebuilt app's
+          # entry while leaving apps built in earlier runs untouched (unlike build.md, which
+          # is overwritten with only this run's subset).
+          [ -f patches-state.json ] || echo '{}' >patches-state.json # always present so 'git add' below can't fail
+          if [ -f patches-built.json ]; then
+            jq -s '.[0] + .[1]' patches-state.json patches-built.json >patches-state.json.tmp
+            mv -f patches-state.json.tmp patches-state.json
+          fi
+
           get_update_json() {
             echo "{
             \"version\": \"$1\",
@@ -117,7 +128,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
       
-          git add build.md *-update.json
+          git add build.md *-update.json patches-state.json
       
           if ! git diff --cached --quiet; then
             git commit -m "Bump version ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}"
