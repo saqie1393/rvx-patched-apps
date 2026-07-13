@@ -70,6 +70,23 @@ arch = "arm64-v8a"
 archive-dlurl = "https://archive.org/download/andrews-apks/apks/com.facebook.katana"
 uptodown-dlurl = "https://facebook.en.uptodown.com/android"
 
+[Messenger-DeVanced]
+app-name = "Messenger"
+patches-source = "RookieEnough/De-Vanced"
+cli-source = "MorpheApp/morphe-cli"
+rv-brand = "De-Vanced"
+build-mode = "both"
+clone = true
+version = "auto"
+arch = "arm64-v8a"
+# 'Hide inbox ads' fingerprints com.facebook.messaging...InboxAdsItemSupplierImplementation
+# / string 'inbox_ads_fetch_start', both removed in Messenger 563.x — the patch can't match
+# this build, so it's excluded (the other De-Vanced Messenger patches apply fine). Drop this
+# once De-Vanced re-fingerprints it for current builds.
+excluded-patches = "'Hide inbox ads'"
+archive-dlurl = "https://archive.org/download/andrews-apks/apks/com.facebook.orca"
+apkmirror-dlurl = "https://www.apkmirror.com/apk/facebook-2/messenger/"
+
 [Threads-DeVanced]
 app-name = "Threads"
 patches-source = "RookieEnough/De-Vanced"
