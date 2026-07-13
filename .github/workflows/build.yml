@@ -31,7 +31,7 @@ jobs:
       - name: Update config
         if: ${{ inputs.from_ci }}
         run: |
-          if git checkout origin/update build.md; then
+          if git checkout origin/update patches-state.json; then
             UPDATE_CFG=$(./build.sh config.toml --config-update)
             if [ "$UPDATE_CFG" ]; then
               echo "$UPDATE_CFG" > config.json
