@@ -42,12 +42,13 @@ Each app is a single config entry that emits two output types:
 
 ### Meta-app clones: duplicate-permission conflict
 
-Meta clone APKs may fail to install alongside the official app with `INSTALL_FAILED_DUPLICATE_PERMISSION`.
+`INSTALL_FAILED_DUPLICATE_PERMISSION` fires when an app defines a custom `<permission>` whose name is already owned by an installed app **signed with a different certificate**. It's the *signature mismatch* that's rejected — apps that share permission names but are signed with the **same** key install side by side.
 
-Known affected (each pair shares the same custom permissions, so only **one** of the two can be installed at a time):
+Meta apps declare shared family permissions (e.g. `com.facebook.permission.prod.FB_APP_COMMUNICATION`) across the Facebook/Messenger family, and the package-rename patch leaves those `com.facebook.*` permission **names** intact. So the conflict is **clone vs. the official Meta app**, not clone vs. clone:
 
-* **Facebook** + **Messenger** — stock and patched both declare the same `com.facebook.*` permissions; you can keep only one across the Facebook/Messenger family.
-* **Threads** — stock and patched Threads conflict on Threads' own shared permissions; you can keep only one.
+* **Our clones coexist with each other.** Facebook (`app.devanced.facebook.katana`) and Messenger (`app.devanced.facebook.orca`) are both signed with this repo's key, so they share a signature and install together fine.
+* **A clone conflicts with the official app.** The Play-Store Facebook/Messenger owns `com.facebook.*` under Meta's certificate; a repo-signed clone declares the same names under a different certificate → `INSTALL_FAILED_DUPLICATE_PERMISSION`. You can't have a Meta-signed member *and* a repo-signed member of the `com.facebook.*` family installed at once — but any number of repo-signed members is fine.
+* **Threads** — same story: the repo-signed Threads clone conflicts with the official (Meta-signed) Threads on Threads' own shared permissions.
 
 Workarounds: uninstall the conflicting official Meta app first, or use the root **module** (original package, no permission rename needed) instead of the clone.
 
