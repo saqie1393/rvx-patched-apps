@@ -160,7 +160,7 @@ jobs:
           APKS=${APKS#"$NL"}
 
           BODY="$(sed 's/^\* \*\*/↪ \*\*/g; s/^\* `/↪ \*\*/g; s/`/\*/g; s/^\* /\↪/g; s/\*\*/\*/g; s/###//g; s/^- /↪ /g; /^==/d;' ../build.md)"
-          MSG="🚀 *New Patched Apps build!*
+          MSG="🚀 *New Patched Apps build — Release ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}!*
 
           ${BODY}
 
