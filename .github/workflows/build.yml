@@ -75,11 +75,11 @@ jobs:
           BODY: ${{ steps.get_output.outputs.BUILD_LOG }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Release" --notes "$BODY" --draft
+            gh release edit "$TAG" --title "Release $TAG" --notes "$BODY" --draft
             gh release upload "$TAG" ./build/* --clobber
             gh release edit "$TAG" --draft=false
           else
-            gh release create "$TAG" ./build/* --title "Release" --notes "$BODY" --draft
+            gh release create "$TAG" ./build/* --title "Release $TAG" --notes "$BODY" --draft
             gh release edit "$TAG" --draft=false
           fi
 
@@ -160,7 +160,7 @@ jobs:
           APKS=${APKS#"$NL"}
 
           BODY="$(sed 's/^\* \*\*/↪ \*\*/g; s/^\* `/↪ \*\*/g; s/`/\*/g; s/^\* /\↪/g; s/\*\*/\*/g; s/###//g; s/^- /↪ /g; /^==/d;' ../build.md)"
-          MSG="🚀 *New Patched Apps build!*
+          MSG="🚀 *New Patched Apps build — Release ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}!*
 
           ${BODY}
 
