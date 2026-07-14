@@ -1,13 +1,11 @@
 ---
 name: Bug report
-about: Bug report
-title: ''
+about: Bugs related to this pipeline
+title: "[BUG]"
 labels: ''
 assignees: ''
 
 ---
 
-**DO NOT REPORT REVANCED STUFF IN THIS REPO**  
-if you delete these lines and proceed to report revanced stuff like **patch bugs** or **patch requests**, you will be **blocked** from this repo
-
-Use issues only to report bugs of the rvmm builder or the modules
+**Do NOT report patch related bugs or issues**
+Use issues only to report bugs of the builder or the modules
