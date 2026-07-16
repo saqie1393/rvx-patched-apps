@@ -73,9 +73,9 @@ get_prebuilts() {
 	cl_dir=${TEMP_DIR}/${cl_dir,,}-rv
 	[ -d "$cl_dir" ] || mkdir "$cl_dir"
 
-	for src_ver in "$patches_src Patches $patches_ver patches" "$cli_src CLI $cli_ver cli"; do
+	for src_ver in "$patches_src Patches $patches_ver" "$cli_src CLI $cli_ver"; do
 		set -- $src_ver
-		local src=$1 tag=$2 ver=${3-} fprefix=$4
+		local src=$1 tag=$2 ver=${3-}
 
 		local is_gitlab=false bare_src="$src"
 		if [[ "$src" == gitlab:* ]]; then is_gitlab=true; bare_src="${src#gitlab:}"; fi
@@ -117,8 +117,14 @@ get_prebuilts() {
 			name_ver="$ver"
 		fi
 
-		local url file tag_name matches
-		file=$(find "$dir" -name "*${fprefix}-${name_ver#v}.*" -type f 2>/dev/null)
+		local file
+		if [ "$tag" = "CLI" ]; then
+			file=$(find "$dir" -maxdepth 1 -name "*cli-${name_ver#v}*.jar" -o -name "*desktop-${name_ver#v}*.jar" -type f 2>/dev/null)
+		elif [ "$tag" = "Patches" ]; then
+			file=$(find "$dir" -maxdepth 1 -name "*patches-${name_ver#v}.*" -type f 2>/dev/null)
+		else abort unreachable; fi
+
+		local url tag_name matches
 		if [ "$ver" = "latest" ]; then
 			file=$(grep -v '/[^/]*dev[^/]*$' <<<"$file" | head -1)
 		else
@@ -675,7 +681,7 @@ patch_apk() {
 	local tmp_files
 	tmp_files="$(pwd)/$(mktemp -d -p "$TEMP_DIR")"
 
-	local cmd="java -jar '$cli_jar' patch '$stock_input' --purge -o '$patched_apk' -p '$patches_jar' --keystore=ks.keystore \
+	local cmd="java -jar '$cli_jar' patch '$stock_input' -o '$patched_apk' -p '$patches_jar' --keystore=ks.keystore \
 --keystore-entry-password=123456789 --keystore-password=123456789 --signer=andrewliang --keystore-entry-alias=andrewliang -t '$tmp_files' $patcher_args"
 	# additional patch bundle(s) applied alongside the primary one (e.g. x-shim + Piko)
 	local ep
