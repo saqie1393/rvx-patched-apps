@@ -363,12 +363,21 @@ semver_validate() {
 	[ ${#ac} = 0 ]
 }
 # highest version a single patches bundle supports for $pkg_name (uses $cli_jar/$pkg_name
-# from caller scope); echoes nothing when the bundle reports "Any" (imposes no constraint).
+# from caller scope); echoes nothing when the bundle imposes no version constraint.
+# $2=lenient: when true, a bundle that reports no compatible versions is treated as
+# "no constraint" instead of a fatal error — used for extra-patches bundles, which may
+# legitimately contribute no versioned patches (e.g. the x-shim shim applied alongside
+# Piko). morphe-desktop 1.11.0+ omits the versions section entirely for such bundles
+# (older CLIs printed "Any"); both cases mean the same thing here.
 _highest_ver_for_jar() {
-	local pj=$1 op pcount
+	local pj=$1 lenient=${2:-false} op pcount
 	op=$(patches_list_versions "$cli_jar" "$pj" "$pkg_name") || return 1
 	op=$(sed -n '/Most common compatible versions:/,$p' <<<"$op" | sed '1d' | awk '{$1=$1}1')
 	if [ "$op" = "Any" ]; then return; fi
+	if [ -z "$op" ]; then
+		[ "$lenient" = true ] && return
+		abort "No patches found for '$pkg_name' in patches '$pj'"
+	fi
 	pcount=$(head -1 <<<"$op") pcount=${pcount#*(} pcount=${pcount% *}
 	if [ -z "$pcount" ]; then
 		abort "No patches found for '$pkg_name' in patches '$pj'"
@@ -404,7 +413,7 @@ get_patch_last_supported_ver() {
 	local vers ej
 	vers=$(_highest_ver_for_jar "$patches_jar") || return 1
 	for ej in ${args[ptjar_extra]:-}; do
-		vers+=$'\n'$(_highest_ver_for_jar "$ej") || return 1
+		vers+=$'\n'$(_highest_ver_for_jar "$ej" true) || return 1
 	done
 	vers=$(grep -v '^$' <<<"$vers" || :)
 	if [ -z "$vers" ]; then return; fi
