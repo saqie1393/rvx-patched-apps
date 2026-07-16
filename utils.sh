@@ -73,9 +73,9 @@ get_prebuilts() {
 	cl_dir=${TEMP_DIR}/${cl_dir,,}-rv
 	[ -d "$cl_dir" ] || mkdir "$cl_dir"
 
-	for src_ver in "$patches_src Patches $patches_ver patches" "$cli_src CLI $cli_ver cli"; do
+	for src_ver in "$patches_src Patches $patches_ver" "$cli_src CLI $cli_ver"; do
 		set -- $src_ver
-		local src=$1 tag=$2 ver=${3-} fprefix=$4
+		local src=$1 tag=$2 ver=${3-}
 
 		local is_gitlab=false bare_src="$src"
 		if [[ "$src" == gitlab:* ]]; then is_gitlab=true; bare_src="${src#gitlab:}"; fi
@@ -117,8 +117,14 @@ get_prebuilts() {
 			name_ver="$ver"
 		fi
 
-		local url file tag_name matches
-		file=$(find "$dir" -name "*${fprefix}-${name_ver#v}.*" -type f 2>/dev/null)
+		local file
+		if [ "$tag" = "CLI" ]; then
+			file=$(find "$dir" -maxdepth 1 -name "*cli-${name_ver#v}*.jar" -o -name "*desktop-${name_ver#v}*.jar" -type f 2>/dev/null)
+		elif [ "$tag" = "Patches" ]; then
+			file=$(find "$dir" -maxdepth 1 -name "*patches-${name_ver#v}.*" -type f 2>/dev/null)
+		else abort unreachable; fi
+
+		local url tag_name matches
 		if [ "$ver" = "latest" ]; then
 			file=$(grep -v '/[^/]*dev[^/]*$' <<<"$file" | head -1)
 		else
@@ -357,12 +363,21 @@ semver_validate() {
 	[ ${#ac} = 0 ]
 }
 # highest version a single patches bundle supports for $pkg_name (uses $cli_jar/$pkg_name
-# from caller scope); echoes nothing when the bundle reports "Any" (imposes no constraint).
+# from caller scope); echoes nothing when the bundle imposes no version constraint.
+# $2=lenient: when true, a bundle that reports no compatible versions is treated as
+# "no constraint" instead of a fatal error — used for extra-patches bundles, which may
+# legitimately contribute no versioned patches (e.g. the x-shim shim applied alongside
+# Piko). morphe-desktop 1.11.0+ omits the versions section entirely for such bundles
+# (older CLIs printed "Any"); both cases mean the same thing here.
 _highest_ver_for_jar() {
-	local pj=$1 op pcount
+	local pj=$1 lenient=${2:-false} op pcount
 	op=$(patches_list_versions "$cli_jar" "$pj" "$pkg_name") || return 1
 	op=$(sed -n '/Most common compatible versions:/,$p' <<<"$op" | sed '1d' | awk '{$1=$1}1')
 	if [ "$op" = "Any" ]; then return; fi
+	if [ -z "$op" ]; then
+		[ "$lenient" = true ] && return
+		abort "No patches found for '$pkg_name' in patches '$pj'"
+	fi
 	pcount=$(head -1 <<<"$op") pcount=${pcount#*(} pcount=${pcount% *}
 	if [ -z "$pcount" ]; then
 		abort "No patches found for '$pkg_name' in patches '$pj'"
@@ -398,7 +413,7 @@ get_patch_last_supported_ver() {
 	local vers ej
 	vers=$(_highest_ver_for_jar "$patches_jar") || return 1
 	for ej in ${args[ptjar_extra]:-}; do
-		vers+=$'\n'$(_highest_ver_for_jar "$ej") || return 1
+		vers+=$'\n'$(_highest_ver_for_jar "$ej" true) || return 1
 	done
 	vers=$(grep -v '^$' <<<"$vers" || :)
 	if [ -z "$vers" ]; then return; fi
@@ -675,7 +690,7 @@ patch_apk() {
 	local tmp_files
 	tmp_files="$(pwd)/$(mktemp -d -p "$TEMP_DIR")"
 
-	local cmd="java -jar '$cli_jar' patch '$stock_input' --purge -o '$patched_apk' -p '$patches_jar' --keystore=ks.keystore \
+	local cmd="java -jar '$cli_jar' patch '$stock_input' -o '$patched_apk' -p '$patches_jar' --keystore=ks.keystore \
 --keystore-entry-password=123456789 --keystore-password=123456789 --signer=andrewliang --keystore-entry-alias=andrewliang -t '$tmp_files' $patcher_args"
 	# additional patch bundle(s) applied alongside the primary one (e.g. x-shim + Piko)
 	local ep
