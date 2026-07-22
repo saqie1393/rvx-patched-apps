@@ -13,6 +13,8 @@ Every release APK/module is published with [GitHub build provenance attestations
 gh attestation verify <file> --repo andrewliang25/patched-apps
 ```
 
+Contributors: please [sign your commits](CONTRIBUTING.md#signing-your-commits) so they show as **Verified**.
+
 ## Apps
 
 | App | Patches | Major features | non-root APK | module | Notes |
